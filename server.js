@@ -3,6 +3,8 @@ const os = require("os");
 const fs = require("fs");
 const git = require("simple-git")("C:/Openhaus/Openhaus-Beta");
 
+var isPatch = true;
+
 /* Fetch device IP Address */
 const interfaces = os.networkInterfaces();
 let ip;
@@ -18,7 +20,8 @@ for (const name of Object.keys(interfaces)) {
 /* Fetch info */
 let jsonString = fs.readFileSync("info.json");
 let info = JSON.parse(jsonString);
-var currentRelease = info.CurrentRelease;
+let currentRelease = info.CurrentRelease;
+let currentPatch = info.CurrentPatch;
 
 /* Server */
 const server = http.createServer(async (req, res) => {
@@ -42,9 +45,19 @@ const server = http.createServer(async (req, res) => {
     /* Fetch tags */
     const tags = await git.tags();
     var latestTag = currentRelease;
-    if (tags.latest.toString() != currentRelease) {
-      latestTag = tags.latest.toString();
+    if (tags.latest.toString() + ".0" != currentRelease) {
+      isPatch = false;
+      latestTag = tags.latest.toString() + ".0";
       info["CurrentRelease"] = latestTag;
+      info["CurrentPatch"] = latestTag;
+      fs.writeFileSync("info.json", JSON.stringify(info));
+    }
+
+    /* Save patch data */
+    if (isPatch) {
+      var patchNumber = parseInt(currentPatch.split(".")[2]) + 1;
+      currentPatch = currentRelease.substr(0, currentRelease.length - 1) + patchNumber.toString();
+      info["CurrentPatch"] = currentPatch;
       fs.writeFileSync("info.json", JSON.stringify(info));
     }
 
@@ -61,10 +74,10 @@ const server = http.createServer(async (req, res) => {
         jsonData = JSON.parse(data);
 
         /* Use crumbs and cookie */
-        if (tags.latest.toString() != currentRelease) {
+        if (!isPatch) {
           options.path = "/job/OpenhausMVP-ReleaseBuild/buildWithParameters?BuildVersion=" + latestTag;
         } else {
-          options.path = "/job/OpenhausMVP-PatchBuild/buildWithParameters?BuildVersion=" + latestTag.substr(0, latestTag.length - 1) + "1";
+          options.path = "/job/OpenhausMVP-PatchBuild/buildWithParameters?BuildVersion=" + currentPatch + "&BasedVersion=" + latestTag;
         }
         options.method = "POST";
         options.headers = {
@@ -83,7 +96,11 @@ const server = http.createServer(async (req, res) => {
         postReq.end();
       });
     });
-    res.end("Build triggered");
+    if (isPatch) {
+      res.end("Patch Build triggered, Version - " + currentPatch);
+    } else {
+      res.end("Release Build triggered, Version - " + latestTag);
+    }
   } else {
     res.statusCode = 404;
     res.end();
